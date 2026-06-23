@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+.venv/
+venv/
+
+# Environment files
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Build output
+dist/
+frontend/dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# SQLite demo databases
+*.db
+*.sqlite
+*.sqlite3
+backend/app.db
+
+# Playwright
+playwright-report/
+test-results/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local worktrees
+.worktrees/
+worktrees/
