@@ -196,46 +196,46 @@ More setup notes are in `docs/ci-cd.md`.
 
 ```text
 Mercedes_Vibathon26/
-  .github/
-    workflows/
-      ci.yml
-      deploy.yml
-  backend/
-    app/
-      __init__.py
-      main.py
-      database.py
-      models.py
-      routes.py
-    tests/
-      test_health.py
-      test_items.py
-    .env.example
-    requirements.txt
-    pytest.ini
-  frontend/
-    src/
-      App.jsx
-      main.jsx
-      api.js
-      index.css
-    public/
-      favicon.svg
-    .env.example
-    index.html
-    package.json
-    vite.config.js
-    tailwind.config.js
-    postcss.config.js
-  e2e/
-    app.spec.js
-  docs/
-    ci-cd.md
-  package.json
-  package-lock.json
-  playwright.config.js
-  README.md
-  .gitignore
+├── .github/
+│   └── workflows/
+│       ├── ci.yml
+│       └── deploy.yml
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── database.py
+│   │   ├── main.py
+│   │   ├── models.py
+│   │   └── routes.py
+│   ├── tests/
+│   │   ├── test_health.py
+│   │   └── test_items.py
+│   ├── .env.example
+│   ├── pytest.ini
+│   └── requirements.txt
+├── docs/
+│   └── ci-cd.md
+├── e2e/
+│   └── app.spec.js
+├── frontend/
+│   ├── public/
+│   │   └── favicon.svg
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── api.js
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── .env.example
+│   ├── index.html
+│   ├── package.json
+│   ├── postcss.config.js
+│   ├── tailwind.config.js
+│   └── vite.config.js
+├── .gitignore
+├── README.md
+├── package-lock.json
+├── package.json
+└── playwright.config.js
 ```
 
 ## File And Folder Breakdown
