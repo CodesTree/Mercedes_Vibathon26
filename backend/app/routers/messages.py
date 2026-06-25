@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -209,13 +210,20 @@ async def reply_message(
                 status_code=422,
                 detail={"detail": "Expected reply_mode='voice' for multipart", "code": "VALIDATION_ERROR"},
             )
-        data = VoiceReplyForm(audio_format=form.get("audio_format", "webm_opus"))
-        transcript = form.get("transcript", "")
+        # VoiceReplyForm requires reply_mode and transcript; audio_format is not in schema
+        transcript_val = form.get("transcript", "")
+        try:
+            data = VoiceReplyForm(reply_mode="voice", transcript=transcript_val)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail={"detail": str(exc), "code": "VALIDATION_ERROR"})
         audio_file = form.get("audio")
-        return await handle_voice_reply(id, data, transcript, audio_file, db)
+        return await handle_voice_reply(id, data, transcript_val, audio_file, db)
     else:
         body = await request.json()
-        data = TextReplyRequest(**body)
+        try:
+            data = TextReplyRequest(**body)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail={"detail": str(exc), "code": "VALIDATION_ERROR"})
         return await handle_text_reply(id, data, db)
 
 
@@ -227,6 +235,13 @@ async def handle_text_reply(msg_id: int, data: TextReplyRequest, db: Session) ->
         raise HTTPException(
             status_code=409,
             detail={"detail": "Contact has no Telegram chat ID", "code": "NO_TELEGRAM_CHAT"},
+        )
+
+    # Explicitly reject already-replied messages (terminal state — spec: INVALID_TRANSITION)
+    if msg.status == MsgStatus.REPLIED:
+        raise HTTPException(
+            status_code=409,
+            detail={"detail": f"{MsgStatus.REPLIED} → {MsgStatus.REPLIED} is not allowed", "code": "INVALID_TRANSITION"},
         )
 
     try:
