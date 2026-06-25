@@ -1,12 +1,23 @@
 # Spec Sheet — Mercedes In-Car AI Co-Pilot (Vibathon 2026)
-**Revision: v3.1 — Backend-Hardened Edition (foolproof data model + typed API models + acceptance criteria)**
+**Revision: v3.2 — STT-to-Text Reply Edition (primary reply redesigned; voice reply promoted to stretch)**
 _Last updated: June 2026_
 
-> **What's new in v3.1:** This revision keeps the v3 architecture unchanged and adds backend rigor:
-> §3.0 data-integrity invariants (incl. the SQLite footguns that silently corrupt PoC data),
-> a formal message state machine (§3.2.1), a consolidated constraint catalog (§3.8),
-> full Pydantic request/response models (§6.0), a standardized error catalog (§6.0.2),
-> and **explicit conditions of success / acceptance criteria for every feature** (§4.x "Done when").
+> **What's new in v3.2:**
+> - **Primary reply changed** — driver speaks → Web Speech API STT transcribes in-browser →
+>   transcript sent as a **Telegram text message**. No file upload, no blob, no `send_voice`.
+>   This removes the MediaRecorder/OGG complexity from the critical path entirely.
+> - **Voice note reply promoted to stretch** — if time permits, driver can switch to voice mode
+>   which records a WebM blob and sends via Telegram `sendVoice`. Gated behind
+>   `settings.voice_reply_enabled` (default `false`).
+> - **Data model updated** — `messages` table revised: `audio_path`/`audio_format` become
+>   nullable stretch-only columns; `reply_mode` column added (`"text"` | `"voice"`);
+>   `ReplyMode` enum added to `enums.py`; `sent_reply_text` is now always non-null on `replied`.
+> - **API routes refined** — `POST /messages/{id}/reply` accepts either JSON body (text path,
+>   primary) or multipart form (voice path, stretch), differentiated by `reply_mode` field.
+>   Validation, error codes, and Pydantic models updated throughout.
+> - **Enums, invariants, and constraint catalog updated** to match new reply modes.
+> - **Acceptance criteria updated** — F1 criteria rewritten for STT→text primary path;
+>   voice stretch criteria added as F1-S1…F1-S4.
 
 ---
 
@@ -24,7 +35,8 @@ interface.
 |---|---|
 | Messaging platform | **Telegram Bot API** (replaces OpenWA/WhatsApp entirely) |
 | Inbound messages | Telegram `getUpdates` long-poll **or** webhook — bot receives texts sent to the demo bot |
-| Outbound replies | **Voice note** — driver records via browser mic (`getUserMedia` + `MediaRecorder`) → FastAPI → Telegram `sendVoice` |
+| Outbound replies — primary | **STT → text.** Driver speaks → browser Web Speech API STT transcribes in-browser → FastAPI sends transcript as a **Telegram text message** (`sendMessage`). No file upload, no blob storage, no `sendVoice` on the critical path. |
+| Outbound replies — stretch | **Voice note.** If `settings.voice_reply_enabled=true` and time permits: browser `getUserMedia` + `MediaRecorder` records WebM/Opus → uploaded to FastAPI → `sendVoice`. Same endpoint, different `reply_mode`. |
 | LLM | **Google Gemini** (`gemini-2.5-flash` classify/summarize, `gemini-2.5-pro` draft) — same GCP project as Calendar |
 | Calendar | **Real Google Calendar API** with OAuth 2.0 + SQLite read-through cache |
 | Interface | React MBUX-style dashboard + browser **Web Speech API** (STT + TTS) |
@@ -33,8 +45,26 @@ interface.
 | Car telemetry | **Car Simulator** panel — simulated position, ETA override, cabin temp, climate |
 | Auth | Single demo driver profile — no login |
 | GPS | Simulated — no real device GPS |
+| Contact sourcing | **Seed data + Telegram identity only.** `contacts` rows are seeded for the demo; new contacts are created automatically when they first message the Telegram bot (`tg_chat_id` from the incoming `Update`). No other contact source is used. |
+| PBAP (Bluetooth Phone Book Access Profile) | **Explicitly out of scope for this PoC.** PBAP requires Bluetooth hardware or a PBAP simulator and adds zero demo value — the messaging platform is Telegram, not the phone's native dialer or SMS. `contacts.phone` is a display-only nullable field populated by seed only; it is never read by any feature logic. No PBAP library, no Bluetooth pairing flow, and no phone-number-based contact lookup will be built. |
 
-**Must-demo features:** F1 (Telegram messages + mic reply), F2 (Late Responder → sends Telegram voice note to meeting attendees), F3 (Calendar → cabin pre-cool + departure planning).
+**Must-demo features:** F1 (Telegram messages + mic reply), F2 (Late Responder → sends Telegram text to meeting attendees), F3 (Calendar → cabin pre-cool + departure planning).
+
+**Explicitly out of scope (do not build, do not design for):**
+
+| Item | Reason excluded |
+|---|---|
+| PBAP / Bluetooth contact sync | Telegram `tg_chat_id` is the sole contact identity. Phone numbers are display-only. Hardware dependency, no demo value. |
+| SMS / native phone dialer | Messaging platform is Telegram Bot API only. |
+| WhatsApp / OpenWA | Replaced by Telegram in v3. |
+| Real GPS / device location | Car position is simulated via the Car Simulator panel. |
+| Animated map marker / drive mode | Dropped with F4. |
+| Live traffic overlay | Dropped with F4. |
+| Turn-by-turn voice guidance | Dropped with F4. |
+| Google Calendar write (meeting block) | Read-only Calendar scope. Stretch only. |
+| Multi-user / auth | Single demo driver profile. No login. |
+| Cloud TTS / ElevenLabs | Primary replies use the driver's own STT-transcribed text, not synthesized voice. Voice note stretch uses mic recording, not cloud TTS. |
+| Voice reply (mic→Telegram `sendVoice`) | **Stretch only** — gated behind `settings.voice_reply_enabled`. Not built in the primary path. |
 
 ---
 
@@ -384,8 +414,9 @@ class MsgStatus(StrEnum):    UNREAD="unread"; SUMMARIZED="summarized"; REPLIED="
 class RelSource(StrEnum):    SEED="seed"; AI="ai_inferred"; USER="user_tagged"; UNKNOWN="unknown"
 class Relationship(StrEnum): BOSS="boss"; FAMILY="family"; FRIEND="friend"; COLLEAGUE="colleague"; MARKETING="marketing"
 class EtaSource(StrEnum):    TOMTOM="tomtom"; SIMULATOR="simulator"
-class AudioFmt(StrEnum):     WEBM="webm_opus"; OGG="ogg_opus"
-class AutoType(StrEnum):     LATE="late_responder"; PRECOOL="cabin_precool"; DEPART="departure_plan"; VOICE="voice_reply"
+class ReplyMode(StrEnum):    TEXT="text"; VOICE="voice"          # PRIMARY = text; STRETCH = voice
+class AudioFmt(StrEnum):     WEBM="webm_opus"; OGG="ogg_opus"   # only populated when reply_mode="voice"
+class AutoType(StrEnum):     LATE="late_responder"; PRECOOL="cabin_precool"; DEPART="departure_plan"; TEXT_REPLY="text_reply"; VOICE_REPLY="voice_reply"
 class AutoStatus(StrEnum):   OK="ok"; ERROR="error"; SKIPPED="skipped"
 ```
 
@@ -481,37 +512,66 @@ CREATE TABLE messages (
                   CHECK(status IN ('unread','summarized','replied','silenced','send_failed')),
   summary         TEXT,
   suggested_reply TEXT,                           -- Gemini-drafted text shown for driver approval
-  sent_reply_text TEXT,                           -- approved text stored even though reply is audio
+
+  -- Reply fields (primary path: STT→text)
+  reply_mode      TEXT    CHECK(reply_mode IN ('text','voice',NULL)),
+                                                  -- 'text' = primary STT path
+                                                  -- 'voice' = stretch voice-note path
+                                                  -- NULL    = not yet replied
+  sent_reply_text TEXT,                           -- the text that was actually sent
+                                                  -- always set when status='replied' (I4)
+                                                  -- for voice mode: transcript that was also
+                                                  --   submitted alongside the audio blob
   replied_at      DATETIME,
+
+  -- Stretch-only voice fields (NULL when reply_mode='text' or not replied)
   audio_path      TEXT,                           -- relative path e.g. audio_replies/7.webm
+                                                  -- NULL unless reply_mode='voice'
   audio_format    TEXT CHECK(audio_format IN ('webm_opus','ogg_opus',NULL))
+                                                  -- NULL unless reply_mode='voice'
 );
-CREATE INDEX idx_messages_contact_id ON messages(contact_id);
-CREATE INDEX idx_messages_status ON messages(status);
-CREATE INDEX idx_messages_priority ON messages(priority);
+CREATE INDEX idx_messages_contact_id  ON messages(contact_id);
+CREATE INDEX idx_messages_status      ON messages(status);
+CREATE INDEX idx_messages_priority    ON messages(priority);
 CREATE INDEX idx_messages_received_at ON messages(received_at DESC);
+CREATE INDEX idx_messages_reply_mode  ON messages(reply_mode);  -- query by reply type
 ```
 
-| Column | Notes |
-|---|---|
-| `tg_update_id` | `UNIQUE` constraint is the sole dedup mechanism — no separate table needed. |
-| `tg_message_id` | Telegram's own `message_id`. Stored for reference; not used for dedup. |
-| `audio_path` | Relative path to the recorded voice blob, e.g. `audio_replies/7.webm`. `null` until replied. |
-| `audio_format` | `"webm_opus"` (Chrome) or `"ogg_opus"` (Firefox). Null until replied. |
-| `sent_reply_text` | The approved text the driver confirmed before recording (stored for log/audit). |
+**Column reference:**
 
-> **Why `audio_path` on `messages` instead of a separate `audio_replies` table?**
-> It's a 1:1 relationship with no extra attributes that matter for demo. Two columns on `messages`
-> is simpler than a separate table + FK + JOIN on every message fetch.
+| Column | Always set when `replied`? | Notes |
+|---|---|---|
+| `reply_mode` | YES | `"text"` (primary) or `"voice"` (stretch). `NULL` before reply. |
+| `sent_reply_text` | YES (both modes) | The exact text delivered. For voice mode this is the STT transcript the driver confirmed before recording. |
+| `replied_at` | YES | UTC timestamp of successful Telegram send. |
+| `audio_path` | Only when `reply_mode="voice"` | `NULL` for text replies. Relative path from `backend/`. |
+| `audio_format` | Only when `reply_mode="voice"` | `"webm_opus"` or `"ogg_opus"`. `NULL` for text replies. |
 
+**Reply mode invariants (additions to §3.0.6):**
+
+| # | Invariant | Enforced by |
+|---|---|---|
+| I4a | `status="replied"` ⟹ `sent_reply_text` NOT NULL | Reply handler — both modes |
+| I4b | `status="replied"` ⟹ `replied_at` NOT NULL | Reply handler — both modes |
+| I4c | `status="replied"` ⟹ `reply_mode` NOT NULL | Reply handler — both modes |
+| I4d | `reply_mode="voice"` ⟹ `audio_path` and `audio_format` both NOT NULL | Voice handler — stretch only |
+| I4e | `reply_mode="text"` ⟹ `audio_path` and `audio_format` both NULL | Text handler — enforced by never writing them |
+| I5a | `status="send_failed"` AND prior `audio_path` written ⟹ file deleted from disk | Voice failure path only |
+
+> **I4 replaces the v3.1 I4** — the old invariant required all four audio fields; the new I4a–I4e
+> correctly separates required-always (`sent_reply_text`, `replied_at`, `reply_mode`) from
+> required-only-for-voice (`audio_path`, `audio_format`).
+
+**Status state machine:** unchanged from §3.2.1 — transitions are the same regardless of reply mode. `apply_status()` does not need to know the mode; mode is set by the handler before calling `apply_status(msg, REPLIED)`.
 **Status state machine:**
 ```
 unread
   ├─ [Gemini classify+summarize] → summarized
-  │     ├─ [driver records + sends reply] → replied
-  │     ├─ [driver silences]              → silenced
-  │     └─ [Telegram send fails]          → send_failed
-  └─ [auto-silence rule fires]           → silenced
+  │     ├─ [driver speaks → STT → text sent]     → replied  (reply_mode="text", primary)
+  │     ├─ [driver records voice → blob sent]     → replied  (reply_mode="voice", stretch)
+  │     ├─ [driver silences]                      → silenced
+  │     └─ [Telegram send fails]                  → send_failed
+  └─ [auto-silence rule fires]                   → silenced
 ```
 Once `status = "replied"`, all further status mutations return `409 Conflict`.
 
@@ -696,12 +756,17 @@ CREATE TABLE settings (
   target_cabin_temp_c  REAL    NOT NULL DEFAULT 22.0,
   late_threshold_min   INTEGER NOT NULL DEFAULT 15,  -- F2 fires when ETA ≥ 15 min past start
   precool_lead_min     INTEGER NOT NULL DEFAULT 10,
-  quiet_contact_ids    TEXT    NOT NULL DEFAULT '[]' -- JSON array of contact IDs
+  quiet_contact_ids    TEXT    NOT NULL DEFAULT '[]', -- JSON array of contact IDs
+  voice_reply_enabled  INTEGER NOT NULL DEFAULT 0    -- 0=text-only (primary); 1=voice stretch unlocked
 );
 ```
 
 > `late_threshold_min` changed from 5 to **15** to match the new F2 trigger condition
 > ("ETA is 15 mins or more from the meeting start time").
+>
+> `voice_reply_enabled` defaults to `0` (text-only). The demo presenter flips it to `1`
+> via `PUT /api/settings` to demo the stretch voice-note flow. FastAPI reads this flag inside
+> `POST /messages/{id}/reply` before accepting a voice-mode request.
 
 ---
 
@@ -737,8 +802,11 @@ class Message(Base):
     status          = Column(Text, default="unread")
     summary         = Column(Text)
     suggested_reply = Column(Text)
-    sent_reply_text = Column(Text)
-    replied_at      = Column(DateTime)
+    # reply fields
+    reply_mode      = Column(Text)                       # "text" | "voice" | None
+    sent_reply_text = Column(Text)                       # always set on replied (I4a)
+    replied_at      = Column(DateTime)                   # always set on replied (I4b)
+    # stretch-only voice fields — NULL when reply_mode="text"
     audio_path      = Column(Text)
     audio_format    = Column(Text)
     contact         = relationship("Contact", back_populates="messages")
@@ -788,6 +856,7 @@ class Settings(Base):
     late_threshold_min  = Column(Integer, default=15)
     precool_lead_min    = Column(Integer, default=10)
     quiet_contact_ids   = Column(Text, default="[]")
+    voice_reply_enabled = Column(Integer, default=0)    # 0=text-only; 1=voice stretch unlocked
 ```
 
 **Table count: 6.** No `webhook_events` (dedup is the `UNIQUE` on `tg_update_id`). No separate
@@ -813,7 +882,10 @@ Pydantic/handler before the DB is touched. Both layers apply to inputs (defense 
 | `messages.body` | TEXT | NOT NULL | 1–4096 chars; empty→`"[no text]"` |
 | `messages.priority` | TEXT | NOT NULL, CHECK in enum | `Priority` enum; default `normal` |
 | `messages.status` | TEXT | NOT NULL, CHECK in enum | only via `apply_status()` (§3.2.1) |
-| `messages.audio_format` | TEXT | CHECK in enum or NULL | set with `audio_path` together or both null |
+| `messages.reply_mode` | TEXT | CHECK in enum or NULL | `ReplyMode` enum; NULL until replied |
+| `messages.sent_reply_text` | TEXT | nullable in DB | NOT NULL enforced by handler when `status→replied` (I4a) |
+| `messages.audio_format` | TEXT | CHECK in enum or NULL | set with `audio_path` together or both null (I4d/I4e) |
+| `messages.audio_path` | TEXT | nullable | path only written when `reply_mode="voice"` (I4d) |
 | `car_state.id` | INTEGER | PK, CHECK(id=1) | never accepted in request body |
 | `car_state.eta_source` | TEXT | NOT NULL, CHECK in enum | `EtaSource` enum |
 | `car_state.eta_minutes` | INTEGER | NOT NULL | 0 ≤ n ≤ 600 |
@@ -833,21 +905,32 @@ Pydantic/handler before the DB is touched. Both layers apply to inputs (defense 
 | `automation_log.payload` | TEXT | NOT NULL | valid JSON object |
 | `automation_log.status` | TEXT | NOT NULL, CHECK in enum | `AutoStatus` enum |
 
-**Audio upload constraints (`POST /messages/{id}/reply`):**
+**Reply request validation — text mode (primary):**
 
 | Rule | Value | On violation |
 |---|---|---|
-| Content-Type | `audio/webm` or `audio/ogg` | `422 INVALID_AUDIO_TYPE` |
+| `reply_mode` field | must equal `"text"` | `422 VALIDATION_ERROR` |
+| `transcript` field | 1–1000 chars, non-empty after strip | `422 VALIDATION_ERROR` |
+| Target contact has `tg_chat_id` | required | `409 NO_TELEGRAM_CHAT` |
+| `settings.voice_reply_enabled` | ignored / irrelevant for text mode | — |
+
+**Reply request validation — voice mode (stretch, gated):**
+
+| Rule | Value | On violation |
+|---|---|---|
+| `reply_mode` field | must equal `"voice"` | `422 VALIDATION_ERROR` |
+| `settings.voice_reply_enabled` | must be `true` | `409 VOICE_REPLY_DISABLED` |
+| `transcript` field | 1–1000 chars (spoken text driver confirmed) | `422 VALIDATION_ERROR` |
+| `audio` file Content-Type | `audio/webm` or `audio/ogg` | `422 INVALID_AUDIO_TYPE` |
 | Max file size | 5 MB | `413 AUDIO_TOO_LARGE` |
 | Min file size | 100 bytes (reject empty recordings) | `422 AUDIO_EMPTY` |
-| `approved_text` length | 1–1000 chars | `422 VALIDATION_ERROR` |
 | Target contact has `tg_chat_id` | required | `409 NO_TELEGRAM_CHAT` |
 
 ---
 
 ## 4. Primary Features (Must-Demo)
 
-### F1 — Telegram Message Triage + Mic-Recorded Voice Reply
+### F1 — Telegram Message Triage + STT→Text Reply (voice reply as stretch)
 
 **Inbound path:**
 - Telegram long-poller picks up messages → internal ingest.
@@ -856,15 +939,33 @@ Pydantic/handler before the DB is touched. Both layers apply to inputs (defense 
 - `marketing` contacts or `low`-priority → auto-silenced.
 - Dashboard shows card for `normal` / `high` messages with Gemini-drafted reply suggestion.
 
-**Reply path (Option A — real mic):**
-- Driver taps "Reply" on a message card.
-- Browser calls `getUserMedia({audio:true})` — prompts mic permission once.
-- Driver reads (or ad-libs from) the suggested reply text; taps "Stop".
-- `MediaRecorder` blob (WebM/Opus or OGG/Opus) uploaded to `POST /api/messages/{id}/reply`.
-- FastAPI saves blob to `backend/audio_replies/<message_id>.webm`, calls `telegram.send_voice(tg_chat_id, blob)`.
-- On success: `messages.status="replied"`, `audio_path` and `audio_format` set, `automation_log` row.
-- On Telegram failure: `messages.status="send_failed"`, saved file deleted.
-- Inject fallback: `POST /api/messages/inject` for offline demo (skips Telegram entirely).
+**Primary reply path — STT → text (must-demo):**
+1. Driver taps "Reply" on a message card.
+2. Dashboard shows the Gemini-drafted suggested reply text.
+3. Driver taps "Speak Reply" → browser Web Speech API STT activates.
+4. Driver speaks the reply (reading the suggestion, or ad-libbing).
+5. STT transcript appears in the text field; driver taps "Send".
+6. Frontend POSTs `{ reply_mode: "text", transcript: "..." }` to `POST /api/messages/{id}/reply`.
+7. FastAPI calls `telegram.send_message(tg_chat_id, transcript)`.
+8. On success: `messages.status="replied"`, `reply_mode="text"`, `sent_reply_text=transcript`, `replied_at=now()`. Log `automation_log` row type `"text_reply"`.
+9. On Telegram failure: `messages.status="send_failed"`. No file to clean up. Log `"error"`.
+10. Inject fallback: `POST /api/messages/inject` for offline demo (skips Telegram entirely).
+
+> **Why STT→text over voice recording?**
+> The Web Speech API's `SpeechRecognition` is universally available in Chrome and produces a plain
+> string — no file, no blob, no storage, no disk lifecycle, no Content-Type negotiation. A
+> `sendMessage` call is a JSON POST that cannot fail due to codec issues. This eliminates the
+> entire MediaRecorder/OGG/blob pipeline from the critical demo path and removes three error codes
+> (`INVALID_AUDIO_TYPE`, `AUDIO_TOO_LARGE`, `AUDIO_EMPTY`) from must-demo coverage.
+
+**Stretch reply path — voice note (demo only when `settings.voice_reply_enabled=true`):**
+1. Presenter sets `voice_reply_enabled=true` via Car Simulator panel (`PUT /api/settings`).
+2. "Voice Note" toggle appears on the reply card.
+3. Driver enables toggle → taps "Record" → browser `getUserMedia` + `MediaRecorder` records WebM/Opus.
+4. Driver taps "Stop" → frontend POSTs multipart `{ reply_mode: "voice", transcript: "...", audio: <blob> }`.
+5. FastAPI: validate voice mode allowed (`settings.voice_reply_enabled`), save blob, call `telegram.send_voice`.
+6. On success: `messages` updated with `reply_mode="voice"`, `audio_path`, `audio_format`, `sent_reply_text`, `replied_at`. Log type `"voice_reply"`.
+7. On Telegram failure: `status="send_failed"`, blob deleted from disk (I5a).
 
 **✅ F1 — Conditions of Success (Done when):**
 
@@ -872,14 +973,25 @@ Pydantic/handler before the DB is touched. Both layers apply to inputs (defense 
 |---|---|---|
 | F1-1 | A Telegram DM to the bot appears as a `messages` row within 3 s, `status` `unread`→`summarized` | Send DM → `GET /api/messages` shows it with a `summary` |
 | F1-2 | Priority is assigned: boss/high-intent → `high`, marketing → `low` | Inject 3 seed messages → priorities match §9.2 |
-| F1-3 | `low`+`marketing` messages auto-set `status="silenced"` and never alert | Inject Acme message → not in `?status=unread`, present in `?status=silenced` |
+| F1-3 | `low`+`marketing` messages auto-set `status="silenced"` and never alert | Inject Acme message → absent from `?status=unread`, present in `?status=silenced` |
 | F1-4 | A new sender creates exactly one `contacts` row; a repeat sender creates none | Inject twice from same `tg_chat_id` → contact count +1 only |
-| F1-5 | Driver can record a voice note and it is delivered to the sender's Telegram | Reply flow → voice bubble appears in sender's chat |
-| F1-6 | After a successful reply, message is `replied` with all four reply fields set (I4) | `GET /api/messages/{id}` → `audio_path`, `audio_format`, `sent_reply_text`, `replied_at` non-null |
-| F1-7 | Telegram send failure leaves `status="send_failed"`, no orphan file (I5), no 500 to client | Mock Telegram 500 → status correct, `audio_replies/` has no stale file, HTTP 200 |
+| F1-5 | Driver speaks a reply via STT → transcript is sent as a Telegram text message | STT reply flow → Telegram message appears in sender's chat as plain text |
+| F1-6 | After a successful text reply, `reply_mode="text"`, `sent_reply_text` non-null, `audio_path` NULL (I4e) | `GET /api/messages/{id}` → confirm all four fields |
+| F1-7 | Telegram `sendMessage` failure → `status="send_failed"`, no 500 to client, no file left on disk | Mock Telegram 500 → status correct, HTTP 200, disk clean |
 | F1-8 | Replying to / silencing an already-`replied` message returns `409 INVALID_TRANSITION` | `POST /{id}/silence` on replied msg → 409 |
 | F1-9 | Duplicate Telegram `update_id` never creates a second row (I7) | Re-deliver same update → row count unchanged |
 | F1-10 | Gemini outage still yields a usable row (`priority="normal"`, `summary=null`), HTTP 200 | Mock Gemini raise → message created, request 200 |
+| F1-11 | Empty or whitespace-only STT transcript rejected before hitting Telegram | POST `transcript=" "` → `422 VALIDATION_ERROR` |
+| F1-12 | `reply_mode="text"` accepted when `voice_reply_enabled=false`; `reply_mode="voice"` rejected | Default settings → text OK, voice → `409 VOICE_REPLY_DISABLED` |
+
+**✅ F1 Stretch — Voice Reply Conditions of Success (Done when `voice_reply_enabled=true`):**
+
+| # | Acceptance criterion | How to verify |
+|---|---|---|
+| F1-S1 | Voice reply only accepted when `settings.voice_reply_enabled=true` | Default off → `409 VOICE_REPLY_DISABLED`; flip on → accepted |
+| F1-S2 | WebM/Opus blob uploaded, saved, sent via `sendVoice` → voice bubble in recipient's Telegram | Full voice flow → voice note received in Telegram |
+| F1-S3 | On success: `reply_mode="voice"`, `audio_path` non-null, `audio_format` non-null, `sent_reply_text` non-null (I4d) | `GET /api/messages/{id}` → all four fields set |
+| F1-S4 | `sendVoice` failure → `status="send_failed"`, blob file deleted, no 500 | Mock Telegram 500 → status correct, `audio_replies/` clean |
 
 ### F2 — Arriving-Late Responder (triggered by nav ETA)
 
@@ -979,39 +1091,65 @@ The TomTom integration exists only to give F2 a realistic ETA when `eta_source="
 
 **Dashboard cards (React MBUX-style):**
 - **Messages card** — unread/summarized Telegram messages, priority badge, summary text, "Reply" + "Silence" buttons.
-- **Reply card (modal)** — shows Gemini-drafted suggested text; mic record button; send button.
+- **Reply modal** — shows Gemini-drafted suggested reply text; "Speak Reply" STT button; editable transcript field; "Send" button. Stretch: "Voice Note" toggle (only visible when `voice_reply_enabled=true`).
 - **Next Trip card** — next event title/time, leave-by countdown, is-late warning, "Cool Cabin" button.
 - **Map card** — TomTom Maps SDK; destination search box; shows polyline after route computed; ETA badge.
-- **Car Simulator panel** (dev/demo) — set ETA source, eta_minutes, cabin_temp, location; inject Telegram message.
+- **Car Simulator panel** (dev/demo) — set ETA source, `eta_minutes`, cabin temp, location; inject Telegram message; toggle `voice_reply_enabled`.
 
 **Voice input (STT — Web Speech API):**
-Commands: `"read my messages"`, `"am I late?"`, `"cool the cabin"`, `"navigate to [place]"`.
-Transcript → `POST /api/assistant/command` → Gemini function-calling → action + `spoken_text` → TTS.
+Two distinct STT uses, both via `window.SpeechRecognition`:
 
-**Voice output (TTS — Web Speech API):**
-Reads message summaries, departure countdowns, late alerts. No turn-by-turn.
+1. **Assistant commands** (always active): `"read my messages"`, `"am I late?"`, `"cool the cabin"`, `"navigate to [place]"` → `POST /api/assistant/command` → Gemini function-calling → `spoken_text` → TTS.
+2. **Reply dictation** (reply modal only): driver taps "Speak Reply" → `SpeechRecognition.start()` → transcript populates the text field → driver taps "Send" → `POST /api/messages/{id}/reply` with `reply_mode="text"`.
 
-**Mic recording (for F1 replies):**
+**Primary reply flow (STT → Telegram text):**
 ```javascript
-// 1. Request mic
+// Reply modal — "Speak Reply" button handler
+const recognition = new window.SpeechRecognition();
+recognition.continuous = false;
+recognition.interimResults = true;
+recognition.lang = "en-US";    // or "ms-MY" for Malay
+
+recognition.onresult = (event) => {
+  const transcript = Array.from(event.results)
+    .map(r => r[0].transcript).join("");
+  setTranscriptField(transcript);  // shows in editable text field
+};
+recognition.start();
+
+// "Send" button handler
+async function sendTextReply(messageId, transcript) {
+  if (!transcript.trim()) return;  // client-side guard before API call
+  await fetch(`/api/messages/${messageId}/reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reply_mode: "text", transcript: transcript.trim() })
+  });
+}
+```
+
+**Stretch reply flow (mic → Telegram voice note, only when `voice_reply_enabled=true`):**
+```javascript
+// "Voice Note" toggle + Record button
 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-// 2. Record
 const recorder = new MediaRecorder(stream, {
   mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-    ? "audio/webm;codecs=opus"
-    : "audio/ogg;codecs=opus"
+    ? "audio/webm;codecs=opus" : "audio/ogg;codecs=opus"
 });
 recorder.start();
-// 3. On stop — collect blob and POST
-recorder.ondataavailable = (e) => chunks.push(e.data);
+
 recorder.onstop = async () => {
   const blob = new Blob(chunks, { type: recorder.mimeType });
   const fd = new FormData();
+  fd.append("reply_mode", "voice");
+  fd.append("transcript", confirmedTranscript);  // text the driver confirmed
   fd.append("audio", blob, "reply.webm");
-  fd.append("approved_text", suggestedReplyText);
   await fetch(`/api/messages/${messageId}/reply`, { method: "POST", body: fd });
 };
 ```
+
+**Voice output (TTS — Web Speech API):**
+Reads message summaries, departure countdowns, late alerts via `SpeechSynthesisUtterance`. No turn-by-turn.
 
 ---
 
@@ -1029,9 +1167,10 @@ Field constraints here mirror the validation catalog in §3.8.
 
 ```python
 # backend/app/schemas.py
-from pydantic import BaseModel, Field, EmailStr, field_validator, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator, ConfigDict
 from datetime import datetime
-from app.enums import Priority, MsgStatus, Relationship, RelSource, EtaSource, AudioFmt
+from typing import Literal
+from app.enums import Priority, MsgStatus, Relationship, RelSource, EtaSource, AudioFmt, ReplyMode
 
 # ---------- shared ----------
 class ORMModel(BaseModel):
@@ -1059,32 +1198,67 @@ class ContactPatch(BaseModel):
 class MessageOut(ORMModel):
     id: int
     contact_id: int
-    contact_name: str                 # joined from contacts.name
-    tg_chat_id: int | None = None     # joined from contacts.tg_chat_id
+    contact_name: str                   # joined from contacts.name
+    tg_chat_id: int | None = None       # joined from contacts.tg_chat_id
     body: str
     received_at: datetime
     priority: Priority
     status: MsgStatus
     summary: str | None = None
     suggested_reply: str | None = None
+    # reply fields
+    reply_mode: ReplyMode | None = None
     sent_reply_text: str | None = None
     replied_at: datetime | None = None
+    # stretch-only voice fields
     audio_format: AudioFmt | None = None
+    # note: audio_path is intentionally NOT exposed in API responses (server-side path)
 
 class MessageListOut(BaseModel):
     items: list[MessageOut]
-    count: int                        # also mirrored in X-Total-Count header
+    count: int                          # also mirrored in X-Total-Count header
 
 class InjectRequest(BaseModel):
     tg_chat_id: int = Field(..., gt=0)
     name: str = Field(..., min_length=1, max_length=120)
     body: str = Field(..., min_length=1, max_length=4096)
-    received_at: datetime | None = None   # defaults to now(UTC) if omitted
-    email: EmailStr | None = None         # optional, helps F2 attendee matching
+    received_at: datetime | None = None  # defaults to now(UTC) if omitted
+    email: EmailStr | None = None        # optional, helps F2 attendee matching
 
-class ReplyForm(BaseModel):
-    # multipart: `audio` arrives as UploadFile in the handler signature, not here
-    approved_text: str = Field(..., min_length=1, max_length=1000)
+# Text reply request body (primary — JSON, Content-Type: application/json)
+class TextReplyRequest(BaseModel):
+    reply_mode: Literal["text"]          # must be exactly "text"
+    transcript: str = Field(..., min_length=1, max_length=1000)
+
+    @field_validator("transcript")
+    @classmethod
+    def not_whitespace(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("transcript must not be whitespace-only")
+        return v.strip()
+
+# Voice reply request (stretch — multipart/form-data)
+# The `audio` UploadFile arrives as a separate FastAPI parameter in the handler.
+# Only the text fields are modelled here; handler combines them.
+class VoiceReplyForm(BaseModel):
+    reply_mode: Literal["voice"]         # must be exactly "voice"
+    transcript: str = Field(..., min_length=1, max_length=1000)
+    # audio: UploadFile  ← declared in the handler, not the schema
+
+# ---------- settings ----------
+class SettingsOut(ORMModel):
+    target_cabin_temp_c: float
+    late_threshold_min: int
+    precool_lead_min: int
+    quiet_contact_ids: list[int]         # deserialized from JSON TEXT
+    voice_reply_enabled: bool
+
+class SettingsPatch(BaseModel):
+    target_cabin_temp_c: float | None = Field(default=None, ge=16.0, le=30.0)
+    late_threshold_min: int | None = Field(default=None, ge=0, le=180)
+    precool_lead_min: int | None = Field(default=None, ge=0, le=60)
+    quiet_contact_ids: list[int] | None = None
+    voice_reply_enabled: bool | None = None    # flip True to unlock stretch voice path
 
 # ---------- car_state ----------
 class CarStateOut(ORMModel):
@@ -1098,7 +1272,7 @@ class CarStateOut(ORMModel):
     route_eta_minutes: int | None = None
     eta_source: EtaSource
     eta_minutes: int
-    resolved_eta: int | None = None    # computed, injected by handler
+    resolved_eta: int | None = None      # computed, injected by handler
     cabin_temp_c: float
     target_temp_c: float
     climate_on: bool
@@ -1123,13 +1297,13 @@ class Attendee(BaseModel):
 class CalendarEventOut(ORMModel):
     id: str
     title: str
-    start: str            # ISO-8601 aware string, passed through verbatim
+    start: str             # ISO-8601 aware string, passed through verbatim
     end: str
     location: str | None = None
     organizer_email: EmailStr | None = None
     attendees: list[Attendee] = []
     cached_at: datetime
-    source: str           # "live" | "cache", injected by handler
+    source: str            # "live" | "cache", injected by handler
 
 # ---------- navigation ----------
 class GeocodeRequest(BaseModel):
@@ -1156,7 +1330,7 @@ class RouteResultOut(BaseModel):
 class NotifiedTarget(BaseModel):
     name: str
     tg_chat_id: int | None = None
-    status: str            # "sent" | "skipped" | "failed"
+    status: str             # "sent" | "skipped" | "failed"
 
 class NextDepartureOut(BaseModel):
     event: CalendarEventOut | None = None
@@ -1179,7 +1353,7 @@ class AutomationLogOut(ORMModel):
     id: int
     type: str
     trigger_at: datetime
-    payload: dict          # parsed from JSON TEXT
+    payload: dict           # parsed from JSON TEXT
     status: str
     error_msg: str | None = None
 
@@ -1195,26 +1369,55 @@ class AssistantResultOut(BaseModel):
 
 ### 6.0.1 Endpoint → Model Map
 
-| Endpoint | Request model | Response model | Success status |
-|---|---|---|---|
-| `POST /messages/inject` | `InjectRequest` | `MessageOut` | 201 |
-| `GET /messages` | query params | `MessageListOut` | 200 |
-| `GET /messages/{id}` | — | `MessageOut` | 200 |
-| `POST /messages/{id}/summarize` | — | `MessageOut` | 200 |
-| `POST /messages/{id}/reply` | `ReplyForm` + `UploadFile` | `MessageOut` | 200 |
-| `POST /messages/{id}/silence` | — | `MessageOut` | 200 |
-| `GET /calendar/events` | — | `list[CalendarEventOut]` | 200 |
-| `GET /car/state` | — | `CarStateOut` | 200 |
-| `PUT /car/state` | `CarStatePatch` | `CarStateOut` | 200 |
-| `POST /car/cabin/cool` | — | `CarStateOut` | 200 |
-| `POST /nav/geocode` | `GeocodeRequest` | `GeocodeOut` | 200 |
-| `POST /nav/route` | `RouteRequest` | `RouteResultOut` | 200 |
-| `GET /automations/next-departure` | — | `NextDepartureOut` | 200 |
-| `POST /automations/run-late-check` | — | `LateCheckResultOut` | 200 |
-| `GET /automations/log` | query params | `list[AutomationLogOut]` | 200 |
-| `POST /assistant/command` | `AssistantCommand` | `AssistantResultOut` | 200 |
-| `GET /contacts` | — | `list[ContactOut]` | 200 |
-| `PATCH /contacts/{id}` | `ContactPatch` | `ContactOut` | 200 |
+| Endpoint | Request model | Response model | Success status | Content-Type |
+|---|---|---|---|---|
+| `POST /messages/inject` | `InjectRequest` | `MessageOut` | 201 | `application/json` |
+| `GET /messages` | query params | `MessageListOut` | 200 | — |
+| `GET /messages/{id}` | — | `MessageOut` | 200 | — |
+| `POST /messages/{id}/summarize` | — | `MessageOut` | 200 | — |
+| `POST /messages/{id}/reply` (text) | `TextReplyRequest` | `MessageOut` | 200 | `application/json` |
+| `POST /messages/{id}/reply` (voice stretch) | `VoiceReplyForm` + `UploadFile` | `MessageOut` | 200 | `multipart/form-data` |
+| `POST /messages/{id}/silence` | — | `MessageOut` | 200 | — |
+| `GET /settings` | — | `SettingsOut` | 200 | — |
+| `PATCH /settings` | `SettingsPatch` | `SettingsOut` | 200 | `application/json` |
+| `GET /calendar/events` | — | `list[CalendarEventOut]` | 200 | — |
+| `GET /car/state` | — | `CarStateOut` | 200 | — |
+| `PUT /car/state` | `CarStatePatch` | `CarStateOut` | 200 | `application/json` |
+| `POST /car/cabin/cool` | — | `CarStateOut` | 200 | — |
+| `POST /nav/geocode` | `GeocodeRequest` | `GeocodeOut` | 200 | `application/json` |
+| `POST /nav/route` | `RouteRequest` | `RouteResultOut` | 200 | `application/json` |
+| `GET /automations/next-departure` | — | `NextDepartureOut` | 200 | — |
+| `POST /automations/run-late-check` | — | `LateCheckResultOut` | 200 | — |
+| `GET /automations/log` | query params | `list[AutomationLogOut]` | 200 | — |
+| `POST /assistant/command` | `AssistantCommand` | `AssistantResultOut` | 200 | `application/json` |
+| `GET /contacts` | — | `list[ContactOut]` | 200 | — |
+| `PATCH /contacts/{id}` | `ContactPatch` | `ContactOut` | 200 | `application/json` |
+
+**How the reply endpoint handles both modes:**
+```python
+# backend/app/routers/messages.py
+@router.post("/{id}/reply", response_model=MessageOut)
+async def reply_message(
+    id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        # stretch voice path
+        form = await request.form()
+        reply_mode = form.get("reply_mode")
+        if reply_mode != "voice":
+            raise HTTPException(422, detail="Expected reply_mode='voice' for multipart", code="VALIDATION_ERROR")
+        data = VoiceReplyForm(reply_mode=reply_mode, transcript=form.get("transcript", ""))
+        audio_file = form.get("audio")
+        return await handle_voice_reply(id, data, audio_file, db)
+    else:
+        # primary text path
+        body = await request.json()
+        data = TextReplyRequest(**body)
+        return await handle_text_reply(id, data, db)
+```
 
 ### 6.0.2 Standardized Error Catalog
 
@@ -1226,15 +1429,16 @@ codes below.
 |---|---|---|---|
 | `NOT_FOUND` | 404 | Message / contact / event id does not exist | any `/{id}` route |
 | `INVALID_TRANSITION` | 409 | Status change not allowed by §3.2.1 | reply, silence |
-| `NO_TELEGRAM_CHAT` | 409 | Target contact has no `tg_chat_id` to send to | reply |
-| `INVALID_AUDIO_TYPE` | 422 | Upload not `audio/webm`/`audio/ogg` | reply |
-| `AUDIO_TOO_LARGE` | 413 | Upload > 5 MB | reply |
-| `AUDIO_EMPTY` | 422 | Upload < 100 bytes | reply |
+| `NO_TELEGRAM_CHAT` | 409 | Target contact has no `tg_chat_id` to send to | reply (both modes) |
+| `VOICE_REPLY_DISABLED` | 409 | `settings.voice_reply_enabled=false`; voice mode not permitted | reply (voice mode only) |
+| `INVALID_AUDIO_TYPE` | 422 | Upload not `audio/webm`/`audio/ogg` | reply (voice mode only) |
+| `AUDIO_TOO_LARGE` | 413 | Upload > 5 MB | reply (voice mode only) |
+| `AUDIO_EMPTY` | 422 | Upload < 100 bytes | reply (voice mode only) |
 | `VALIDATION_ERROR` | 422 | Pydantic body/query validation failed | any typed body |
 | `CALENDAR_NOT_AUTHORISED` | 409 | No stored Google token; visit `/calendar/auth` | calendar events |
 | `UPSTREAM_TOMTOM` | 502 | TomTom routing/geocode failed | nav routes |
-| `UPSTREAM_TELEGRAM` | 502 | Telegram API unreachable (poller logs only; sends set `send_failed`) | nav N/A |
-| `SINGLETON_VIOLATION` | 400 | Request body tried to set `id` on a singleton | car/settings PUT |
+| `UPSTREAM_TELEGRAM` | 502 | Telegram API unreachable (poller logs only; sends set `send_failed`) | reply send path |
+| `SINGLETON_VIOLATION` | 400 | Request body tried to set `id` on a singleton | car/settings PATCH |
 
 **Rule:** Gemini failures are **never** surfaced as errors — they degrade gracefully (§8.3) and the
 request still returns its normal 2xx model with null AI fields.
@@ -1253,37 +1457,64 @@ request still returns its normal 2xx model with null AI fields.
 
 | Method | Path | Request Body | Response | HTTP |
 |---|---|---|---|---|
-| `POST` | `/api/messages/inject` | `{"tg_chat_id":int,"name":"str","body":"str","received_at":"ISO?"}` | Message object | 201 |
-| `GET`  | `/api/messages` | Query: `?status=unread&priority=high&limit=50` | `[Message]` + header `X-Total-Count` | 200 |
-| `GET`  | `/api/messages/{id}` | — | Message object | 200 |
-| `POST` | `/api/messages/{id}/summarize` | — | Message object (summary + priority populated) | 200 |
-| `POST` | `/api/messages/{id}/reply` | Multipart: `audio` (blob) + `approved_text` (str) | Message object with `status="replied"` | 200 |
-| `POST` | `/api/messages/{id}/silence` | — | Message object with `status="silenced"` | 200 / 409 |
+| `POST` | `/api/messages/inject` | `InjectRequest` JSON | `MessageOut` | 201 |
+| `GET`  | `/api/messages` | Query: `?status=unread&priority=high&limit=50` | `MessageListOut` + `X-Total-Count` | 200 |
+| `GET`  | `/api/messages/{id}` | — | `MessageOut` | 200 |
+| `POST` | `/api/messages/{id}/summarize` | — | `MessageOut` (summary + priority populated) | 200 |
+| `POST` | `/api/messages/{id}/reply` | **Text (primary):** `TextReplyRequest` JSON<br>**Voice (stretch):** `VoiceReplyForm` + audio `UploadFile` multipart | `MessageOut` with `status="replied"` | 200 |
+| `POST` | `/api/messages/{id}/silence` | — | `MessageOut` with `status="silenced"` | 200 / 409 |
 
-**`POST /api/messages/{id}/reply` — multipart fields:**
+**`POST /api/messages/{id}/reply` — text mode (primary):**
 
-| Field | Type | Required | Notes |
+```json
+// Content-Type: application/json
+{
+  "reply_mode": "text",
+  "transcript": "I'll be there in 20 minutes, apologies for the delay."
+}
+```
+
+| Field | Type | Required | Constraint |
 |---|---|---|---|
-| `audio` | File | YES | WebM/Opus or OGG/Opus blob from MediaRecorder |
-| `approved_text` | str | YES | Stored in `messages.sent_reply_text` |
+| `reply_mode` | `"text"` | YES | Literal — must be `"text"` |
+| `transcript` | str | YES | 1–1000 chars; stripped; non-whitespace |
 
-**Message object schema:**
+**`POST /api/messages/{id}/reply` — voice mode (stretch):**
 
-| Field | Type | Example |
-|---|---|---|
-| `id` | int | `3` |
-| `contact_id` | int | `1` |
-| `contact_name` | str | `"Ahmad Razif"` |
-| `tg_chat_id` | int\|null | `987654321` |
-| `body` | str | `"Running 10 min late, is that okay?"` |
-| `received_at` | ISO str | `"2026-06-25T08:45:00Z"` |
-| `priority` | str | `"high"` |
-| `status` | str | `"summarized"` |
-| `summary` | str\|null | `"Ahmad is asking if a 10-min delay is acceptable."` |
-| `suggested_reply` | str\|null | `"Thanks Ahmad, that works fine!"` |
-| `sent_reply_text` | str\|null | `"Thanks Ahmad, that works fine!"` |
-| `replied_at` | ISO str\|null | `null` |
-| `audio_format` | str\|null | `"webm_opus"` |
+```
+Content-Type: multipart/form-data
+Fields:
+  reply_mode   (str)   "voice"
+  transcript   (str)   text the driver confirmed before recording (1–1000 chars)
+  audio        (file)  WebM/Opus or OGG/Opus blob from MediaRecorder
+```
+
+| Field | Type | Required | Constraint |
+|---|---|---|---|
+| `reply_mode` | `"voice"` | YES | Literal — must be `"voice"` |
+| `transcript` | str | YES | 1–1000 chars — stored as `sent_reply_text` |
+| `audio` | File | YES | `audio/webm` or `audio/ogg`; 100 bytes–5 MB |
+
+**MessageOut schema:**
+
+| Field | Type | Text reply | Voice reply | Notes |
+|---|---|---|---|---|
+| `id` | int | ✅ | ✅ | |
+| `contact_id` | int | ✅ | ✅ | |
+| `contact_name` | str | ✅ | ✅ | joined from `contacts.name` |
+| `tg_chat_id` | int\|null | ✅ | ✅ | joined from `contacts.tg_chat_id` |
+| `body` | str | ✅ | ✅ | original inbound message |
+| `received_at` | ISO str | ✅ | ✅ | |
+| `priority` | str | ✅ | ✅ | |
+| `status` | str | ✅ | ✅ | |
+| `summary` | str\|null | ✅ | ✅ | Gemini output |
+| `suggested_reply` | str\|null | ✅ | ✅ | Gemini draft shown to driver |
+| `reply_mode` | `"text"`\|`"voice"`\|null | `"text"` | `"voice"` | null before reply |
+| `sent_reply_text` | str\|null | transcript | transcript | always non-null after reply (I4a) |
+| `replied_at` | ISO str\|null | non-null | non-null | always non-null after reply (I4b) |
+| `audio_format` | str\|null | **null** | `"webm_opus"`\|`"ogg_opus"` | null for text mode (I4e) |
+
+> `audio_path` is server-internal and **never exposed** in API responses.
 
 **Ingest business rules (applies to both long-poll and `/inject`):**
 - Upsert contact by `tg_chat_id`. If `relationship IS NULL`, trigger AI inference.
@@ -1291,6 +1522,27 @@ request still returns its normal 2xx model with null AI fields.
 - Only `"private"` chat type messages are processed; group/channel messages are dropped.
 - Gemini failure: `priority="normal"`, `summary=null` — message still created.
 - Duplicate `tg_update_id`: SQLite `UNIQUE` constraint → `INSERT OR IGNORE` → silently skipped.
+
+---
+
+### 6.2a Settings
+
+| Method | Path | Request Body | Response | HTTP |
+|---|---|---|---|---|
+| `GET`   | `/api/settings` | — | `SettingsOut` | 200 |
+| `PATCH` | `/api/settings` | `SettingsPatch` JSON | `SettingsOut` | 200 |
+
+**SettingsOut schema:**
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `target_cabin_temp_c` | float | 22.0 | Cabin cooling setpoint |
+| `late_threshold_min` | int | 15 | F2 fires when `minutes_late ≥` this |
+| `precool_lead_min` | int | 10 | Pre-cool fires this many min before `leave_by` |
+| `quiet_contact_ids` | `list[int]` | `[]` | Auto-silence these contact IDs |
+| `voice_reply_enabled` | bool | `false` | **Flip to `true` to unlock stretch voice reply** |
+
+**Demo tip:** The Car Simulator panel exposes a `voice_reply_enabled` toggle that calls `PATCH /api/settings` directly, so the presenter can switch to voice mode mid-demo without touching a terminal.
 
 ---
 
@@ -1523,13 +1775,80 @@ Draft failure: `suggested_reply=null`. Function-call failure: `spoken_text="Sorr
 ### 8.5 TomTom Failure Handling
 `/nav/route` failure → `502`. `car_state` NOT mutated. `eta_source` NOT changed.
 
-### 8.6 Audio Reply File Lifecycle
-1. `POST /api/messages/{id}/reply` receives blob.
-2. Validate content-type header is `audio/webm` or `audio/ogg`. Reject anything else with `422`.
-3. Save to `backend/audio_replies/<message_id>.webm` (use `message_id` as filename — 1:1, no separate table).
-4. Call `telegram.send_voice(contact.tg_chat_id, blob_bytes)`.
-5. Success: update `messages` (`status="replied"`, `audio_path`, `audio_format`, `sent_reply_text`, `replied_at`). Log `automation_log` row type `"voice_reply"`.
-6. Failure: delete saved file; set `messages.status="send_failed"`. Log `automation_log` row with `status="error"`.
+### 8.6 Reply Handler Logic (both modes)
+
+**Text mode (primary) — `handle_text_reply()`:**
+```python
+async def handle_text_reply(msg_id: int, data: TextReplyRequest, db: Session) -> Message:
+    msg = db.get(Message, msg_id) or raise_404()
+    contact = msg.contact
+    if not contact.tg_chat_id:
+        raise AppError("NO_TELEGRAM_CHAT", 409)
+    # 1. Validate transition BEFORE calling Telegram (read-only transaction)
+    apply_status(msg, MsgStatus.REPLIED)          # raises 409 on bad transition
+    # 2. Call Telegram (outside transaction — §3.0.2)
+    try:
+        await telegram.send_message(contact.tg_chat_id, data.transcript)
+    except Exception as e:
+        apply_status(msg, MsgStatus.SEND_FAILED)  # re-validate (send_failed is allowed from summarized)
+        msg.replied_at = None
+        db.commit()
+        log_automation(db, AutoType.TEXT_REPLY, status=AutoStatus.ERROR, error=str(e), ...)
+        return msg
+    # 3. Persist (new short transaction)
+    msg.reply_mode      = ReplyMode.TEXT
+    msg.sent_reply_text = data.transcript
+    msg.replied_at      = datetime.now(timezone.utc)
+    # audio_path and audio_format intentionally NOT set (I4e)
+    db.commit()
+    log_automation(db, AutoType.TEXT_REPLY, status=AutoStatus.OK, ...)
+    return msg
+```
+
+**Voice mode (stretch) — `handle_voice_reply()`:**
+```python
+async def handle_voice_reply(msg_id: int, data: VoiceReplyForm,
+                              audio_file: UploadFile, db: Session) -> Message:
+    settings = db.get(Settings, 1)
+    if not settings.voice_reply_enabled:
+        raise AppError("VOICE_REPLY_DISABLED", 409)
+    msg = db.get(Message, msg_id) or raise_404()
+    contact = msg.contact
+    if not contact.tg_chat_id:
+        raise AppError("NO_TELEGRAM_CHAT", 409)
+    # Validate audio
+    content_type = audio_file.content_type or ""
+    if not content_type.startswith(("audio/webm", "audio/ogg")):
+        raise AppError("INVALID_AUDIO_TYPE", 422)
+    audio_bytes = await audio_file.read()
+    if len(audio_bytes) < 100:  raise AppError("AUDIO_EMPTY", 422)
+    if len(audio_bytes) > 5_000_000: raise AppError("AUDIO_TOO_LARGE", 413)
+    # Validate transition before any side effects
+    apply_status(msg, MsgStatus.REPLIED)
+    # Save file — before calling Telegram, so we can clean up on failure
+    fmt = AudioFmt.WEBM if "webm" in content_type else AudioFmt.OGG
+    ext = "webm" if fmt == AudioFmt.WEBM else "ogg"
+    path = f"audio_replies/{msg_id}.{ext}"
+    Path(f"backend/{path}").write_bytes(audio_bytes)
+    # Call Telegram (outside transaction)
+    try:
+        await telegram.send_voice(contact.tg_chat_id, audio_bytes)
+    except Exception as e:
+        Path(f"backend/{path}").unlink(missing_ok=True)  # I5a — clean up on failure
+        apply_status(msg, MsgStatus.SEND_FAILED)
+        db.commit()
+        log_automation(db, AutoType.VOICE_REPLY, status=AutoStatus.ERROR, error=str(e), ...)
+        return msg
+    # Persist
+    msg.reply_mode      = ReplyMode.VOICE
+    msg.sent_reply_text = data.transcript
+    msg.replied_at      = datetime.now(timezone.utc)
+    msg.audio_path      = path
+    msg.audio_format    = fmt
+    db.commit()
+    log_automation(db, AutoType.VOICE_REPLY, status=AutoStatus.OK, ...)
+    return msg
+```
 
 ### 8.7 F2 Attendee Matching
 ```python
@@ -1611,8 +1930,12 @@ cabin_temp_c=28.0  target_temp_c=22.0  climate_on=false
 ### 9.4 `settings` Seed Row
 
 ```
-target_cabin_temp_c=22.0  late_threshold_min=15  precool_lead_min=10  quiet_contact_ids=[]
+target_cabin_temp_c=22.0  late_threshold_min=15  precool_lead_min=10
+quiet_contact_ids=[]  voice_reply_enabled=false
 ```
+
+> `voice_reply_enabled` seeds as `false` (text-only mode). The demo presenter toggles it to
+> `true` via the Car Simulator panel when they want to demo the stretch voice reply feature.
 
 ---
 
@@ -1707,34 +2030,39 @@ Marcus starts the Telegram bot and confirms message ingestion live before P1 beg
 ## 15. Verification Checklist
 
 - Telegram bot live: `/start` sent → poller logs the update → `GET /api/messages` shows it.
-- Mic reply: browser grants mic → record 3 s → send → Telegram chat shows a voice note bubble.
+- **STT text reply (primary):** browser STT activates → driver speaks → transcript appears → "Send" → Telegram chat shows plain text message. `GET /api/messages/{id}` → `reply_mode="text"`, `sent_reply_text` set, `audio_format=null`.
+- **Voice reply (stretch):** `PATCH /api/settings` with `voice_reply_enabled=true` → "Voice Note" toggle visible → record → send → Telegram chat shows voice bubble. `GET /api/messages/{id}` → `reply_mode="voice"`, `audio_format` set.
 - Google Calendar: `GET /api/calendar/auth` → OAuth flow completes → `GET /api/calendar/events` returns `source="live"`.
 - TomTom route: `POST /api/nav/route` with KL Sentral → Menara Mercedes → `car_state.route_eta_minutes` set → map renders polyline.
 - F2 late-check (simulator): set `eta_minutes=35`, event starts in 20 min → `POST /run-late-check` → `is_late=true` → attendees receive Telegram text.
 - F2 late-check (TomTom): route computed → `eta_source="tomtom"` → same result.
 - F3 cabin cool: `POST /car/cabin/cool` → `climate_on=true` → dashboard updates.
+- `GET /api/settings` → `voice_reply_enabled=false` by default; `PATCH` with `true` → confirmed.
 - `pytest` → all unit tests green (Telegram + Gemini + TomTom mocked).
 - `npm run build` → no TypeScript errors.
-- **Manual demo script:** Send Telegram DM to bot → card appears on dashboard → Gemini summary shown → driver taps Reply → records voice → voice note delivered in Telegram → set ETA 35 min, event in 20 min → tap "Am I late?" → attendees receive apology text in Telegram → next event shown → cabin cool triggered → map shows route polyline + ETA.
+- **Manual demo script:** Send Telegram DM to bot → card appears → Gemini summary shown → driver taps "Speak Reply" → STT transcribes → "Send" → text message delivered in Telegram → set ETA 35 min, event in 20 min → "Am I late?" → attendees receive apology text → next event shown → cabin cool triggered → map shows route polyline + ETA. **Then (stretch):** presenter flips `voice_reply_enabled=true` in Simulator panel → second message → driver records voice note → voice bubble delivered in Telegram.
 
 ---
 
 ## 16. Definition of Done (acceptance gate)
 
-The PoC is demo-ready when **all** of the following hold. Each maps to the per-feature criteria in §4.
+The PoC is demo-ready when **all** of the following hold.
 
 | Gate | Source | Pass condition |
 |---|---|---|
-| Data integrity | §3.0 / §3.8 | FK pragma on; all 8 invariants (I1–I8) hold under the test suite |
+| Data integrity | §3.0 / §3.8 | FK pragma on; invariants I1–I8 + I4a–I4e hold under the test suite |
 | Status machine | §3.2.1 | Every disallowed transition returns 409; allowed ones succeed |
+| Reply modes correct | §3.2 | `reply_mode="text"` → `audio_path` null (I4e); `reply_mode="voice"` → `audio_path` non-null (I4d) |
 | Typed contracts | §6.0 | Every endpoint validates via its Pydantic model; bad bodies → 422 |
 | Error catalog | §6.0.2 | Each listed `code` is reachable and returns its stated HTTP status |
-| F1 | §4 F1-1…F1-10 | All 10 criteria pass |
+| F1 (text, primary) | §4 F1-1…F1-12 | All 12 criteria pass |
+| F1 stretch (voice) | §4 F1-S1…F1-S4 | All 4 criteria pass (only when `voice_reply_enabled=true`) |
 | F2 | §4 F2-1…F2-8 | All 8 criteria pass |
 | F3 | §4 F3-1…F3-7 | All 7 criteria pass |
-| Navigation | §4 N-1…N-4 | All 4 criteria pass |
+| Navigation utility | §4 N-1…N-4 | All 4 criteria pass |
+| Settings API | §6.2a | `GET /settings` and `PATCH /settings` work; `voice_reply_enabled` toggle flips voice stretch on/off |
 | Resilience | §8.3–8.5 | Gemini/Telegram/TomTom outages degrade gracefully, never 500 the dashboard |
 | Test suite | §10 | `pytest` green; the E2E flows pass with externals mocked |
 
-**One-line gate:** *foolproof data (§3) + typed APIs (§6.0) + every feature's "Done when" table (§4) green = ship.*
+**One-line gate:** *text-reply primary works end-to-end + all feature acceptance tables green + voice stretch gated cleanly behind `voice_reply_enabled` = ship.*
 
