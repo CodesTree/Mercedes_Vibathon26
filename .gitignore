@@ -32,6 +32,11 @@ __pycache__/
 *.sqlite3
 backend/app.db
 
+# CarPa runtime artifacts
+backend/audio_replies/*
+!backend/audio_replies/.gitkeep
+backend/calendar_token.json
+
 # Playwright
 playwright-report/
 test-results/
