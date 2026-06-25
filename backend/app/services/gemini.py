@@ -54,8 +54,12 @@ async def classify_and_summarize(message_body: str, contact_name: str, relations
 
 
 async def draft_late_apology(contact_name: str, event_title: str, minutes_late: int) -> str:
+    prompt = (
+        f"Draft a short, friendly apology message (1-2 sentences) to {contact_name} "
+        f"saying I am running about {minutes_late} minutes late to {event_title}. "
+        f"Be professional and brief."
+    )
     fallback = f"Hi {contact_name}, I'm running about {minutes_late} minutes late to {event_title}. See you soon."
-    prompt = fallback
     try:
         text = await _generate("gemini-2.5-flash", prompt)
         return text.strip() or fallback
