@@ -120,13 +120,14 @@ def get_next_departure(db: Session = Depends(get_db)):
     arrival = now + timedelta(minutes=resolved_eta)
     is_late = (arrival - event_start).total_seconds() / 60 >= settings.late_threshold_min
 
-    # Check if precool has been fired for current event today
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
+    # Check if precool has been fired for the current event specifically
+    # Look for any cabin_precool log within 12h before event_start
+    window_start = (event_start - timedelta(hours=12)).replace(tzinfo=None)
+    event_start_naive = event_start.replace(tzinfo=None)
     precool_log = db.query(AutomationLog).filter(
         AutomationLog.type == AutoType.PRECOOL,
-        AutomationLog.trigger_at >= today_start.replace(tzinfo=None),
-        AutomationLog.trigger_at < today_end.replace(tzinfo=None),
+        AutomationLog.trigger_at >= window_start,
+        AutomationLog.trigger_at <= event_start_naive,
     ).first()
     precool_fired = precool_log is not None
 
