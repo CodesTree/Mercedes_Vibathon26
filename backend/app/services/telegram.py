@@ -48,14 +48,17 @@ async def send_voice(chat_id: int, audio_bytes: bytes, caption: str = "") -> dic
 
 
 async def ingest_update(update: dict) -> None:
+    # Guard 1: Drop if no message key (cannot process without a message)
     msg_data = update.get("message")
     if not msg_data:
         return
 
+    # Guard 2: Drop if not a private chat (only 'private' chat type messages are processed)
     chat = msg_data.get("chat", {})
     if chat.get("type") != "private":
         return
 
+    # Guard 3: Drop if message text is missing or empty
     text = msg_data.get("text", "")
     if not text:
         return
