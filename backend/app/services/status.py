@@ -16,6 +16,16 @@ class Conflict(Exception):
         super().__init__(detail)
 
 
+def validate_transition(msg, new: S):
+    """Validate that transition is allowed without changing status. Raises Conflict if not."""
+    cur = S(msg.status)
+    if new == cur:
+        return  # no-op is always valid
+    if new not in _ALLOWED[cur]:
+        raise Conflict(code="INVALID_TRANSITION",
+                       detail=f"{cur} → {new} is not allowed")
+
+
 def apply_status(msg, new: S):
     cur = S(msg.status)
     if new == cur:

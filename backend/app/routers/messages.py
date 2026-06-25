@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -17,7 +17,7 @@ from ..schemas import (
     VoiceReplyForm,
 )
 from ..services.gemini import classify_and_summarize
-from ..services.status import Conflict, apply_status
+from ..services.status import Conflict, apply_status, validate_transition
 from ..services.telegram import send_message, send_voice
 
 logger = logging.getLogger(__name__)
@@ -128,13 +128,12 @@ async def inject_message(data: InjectRequest, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=MessageListOut)
 def list_messages(
+    response: Response,
     status: str | None = None,
     priority: str | None = None,
     limit: int = 50,
     db: Session = Depends(get_db),
 ):
-    from fastapi.responses import JSONResponse
-
     query = db.query(Message)
     if status:
         query = query.filter(Message.status == status)
@@ -145,6 +144,7 @@ def list_messages(
     messages = query.order_by(Message.received_at.desc()).limit(limit).all()
     items = [MessageOut.from_orm_with_contact(m) for m in messages]
 
+    response.headers["X-Total-Count"] = str(total)
     return MessageListOut(messages=items, total=total)
 
 
@@ -222,7 +222,7 @@ async def handle_text_reply(msg_id: int, data: TextReplyRequest, db: Session) ->
         )
 
     try:
-        apply_status(msg, MsgStatus.REPLIED)
+        validate_transition(msg, MsgStatus.REPLIED)
     except Conflict as e:
         raise HTTPException(status_code=409, detail={"detail": e.detail, "code": e.code})
 
@@ -239,6 +239,7 @@ async def handle_text_reply(msg_id: int, data: TextReplyRequest, db: Session) ->
         db.refresh(msg)
         return MessageOut.from_orm_with_contact(msg)
 
+    apply_status(msg, MsgStatus.REPLIED)
     msg.reply_mode = "text"
     msg.sent_reply_text = data.transcript
     msg.replied_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -292,7 +293,7 @@ async def handle_voice_reply(
         )
 
     try:
-        apply_status(msg, MsgStatus.REPLIED)
+        validate_transition(msg, MsgStatus.REPLIED)
     except Conflict as e:
         raise HTTPException(status_code=409, detail={"detail": e.detail, "code": e.code})
 
@@ -323,6 +324,7 @@ async def handle_voice_reply(
         db.refresh(msg)
         return MessageOut.from_orm_with_contact(msg)
 
+    apply_status(msg, MsgStatus.REPLIED)
     msg.reply_mode = "voice"
     msg.sent_reply_text = transcript
     msg.replied_at = datetime.now(timezone.utc).replace(tzinfo=None)
