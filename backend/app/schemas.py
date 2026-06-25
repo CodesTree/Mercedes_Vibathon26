@@ -124,7 +124,7 @@ class SettingsOut(ORMModel):
     late_threshold_min: int
     precool_lead_min: int
     quiet_contact_ids: str
-    voice_reply_enabled: int
+    voice_reply_enabled: bool
 
 
 class SettingsPatch(BaseModel):
@@ -132,7 +132,7 @@ class SettingsPatch(BaseModel):
     late_threshold_min: int | None = None
     precool_lead_min: int | None = None
     quiet_contact_ids: str | None = None
-    voice_reply_enabled: int | None = None
+    voice_reply_enabled: bool | None = None
 
 
 # ---------------------------------------------------------------------------

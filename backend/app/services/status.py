@@ -1,4 +1,4 @@
-from app.enums import MsgStatus as S
+from ..enums import MsgStatus as S
 
 _ALLOWED = {
     S.UNREAD:      {S.SUMMARIZED, S.SILENCED},
