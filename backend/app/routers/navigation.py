@@ -17,21 +17,22 @@ async def geocode_query(query: GeocodeRequest):
     return GeocodeOut(
         lat=result["lat"],
         lng=result["lng"],
-        display_name=result.get("label", ""),
+        label=result.get("label", ""),
     )
 
 
 @router.post("/route", response_model=RouteResultOut)
 async def compute_route(req: RouteRequest, db: Session = Depends(get_db)):
-    result = await get_route(req.origin_lat, req.origin_lng, req.destination_lat, req.destination_lng)
+    # TomTom failure raises HTTPException(502) — car_state NOT mutated (I6)
+    result = await get_route(req.origin_lat, req.origin_lng, req.dest_lat, req.dest_lng)
 
     car = db.query(CarState).filter(CarState.id == 1).first()
     if car is None:
         car = CarState(id=1)
         db.add(car)
 
-    car.destination_lat = req.destination_lat
-    car.destination_lng = req.destination_lng
+    car.destination_lat = req.dest_lat
+    car.destination_lng = req.dest_lng
     car.route_polyline = json.dumps(result["polyline"])
     car.route_eta_minutes = result["eta_minutes"]
     car.eta_source = "tomtom"
@@ -39,7 +40,8 @@ async def compute_route(req: RouteRequest, db: Session = Depends(get_db)):
     db.commit()
 
     return RouteResultOut(
+        polyline=result["polyline"],
         eta_minutes=result["eta_minutes"],
-        eta_source="tomtom",
-        route_polyline=json.dumps(result["polyline"]),
+        distance_km=result.get("distance_km", 0.0),
+        destination_name=result.get("destination_name", ""),
     )

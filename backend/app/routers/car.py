@@ -25,7 +25,6 @@ def _get_or_create_car(db: Session) -> CarState:
 
 def _car_to_out(car: CarState) -> CarStateOut:
     return CarStateOut(
-        id=car.id,
         location_name=car.location_name,
         destination_name=car.destination_name,
         current_lat=car.current_lat,
@@ -36,9 +35,10 @@ def _car_to_out(car: CarState) -> CarStateOut:
         route_eta_minutes=car.route_eta_minutes,
         eta_source=car.eta_source,
         eta_minutes=car.eta_minutes,
+        resolved_eta=get_resolved_eta(car),
         cabin_temp_c=car.cabin_temp_c,
         target_temp_c=car.target_temp_c,
-        climate_on=car.climate_on,
+        climate_on=bool(car.climate_on),
         updated_at=car.updated_at,
     )
 

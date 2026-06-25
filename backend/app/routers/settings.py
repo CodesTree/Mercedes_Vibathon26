@@ -22,11 +22,10 @@ def _get_or_create_settings(db: Session) -> Settings:
 
 def _settings_to_out(settings: Settings) -> SettingsOut:
     return SettingsOut(
-        id=settings.id,
         target_cabin_temp_c=settings.target_cabin_temp_c,
         late_threshold_min=settings.late_threshold_min,
         precool_lead_min=settings.precool_lead_min,
-        quiet_contact_ids=settings.quiet_contact_ids or "[]",
+        quiet_contact_ids=json.loads(settings.quiet_contact_ids or "[]"),
         voice_reply_enabled=bool(settings.voice_reply_enabled),
     )
 
@@ -46,6 +45,8 @@ def patch_settings(patch: SettingsPatch, db: Session = Depends(get_db)):
     for field, value in update_data.items():
         if field == "voice_reply_enabled":
             setattr(settings, field, 1 if value else 0)
+        elif field == "quiet_contact_ids":
+            setattr(settings, field, json.dumps(value) if value is not None else "[]")
         else:
             setattr(settings, field, value)
 

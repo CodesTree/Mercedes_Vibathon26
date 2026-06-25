@@ -5,13 +5,14 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..schemas import CalendarEventOut
+from ..schemas import Attendee, CalendarEventOut
 from ..services.google_cal import exchange_code_for_tokens, get_oauth_redirect_url, get_upcoming_events
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 
 
 def _build_calendar_event_out(event, source: str) -> CalendarEventOut:
+    attendees_raw = json.loads(event.attendees or "[]")
     return CalendarEventOut(
         id=event.id,
         title=event.title,
@@ -19,8 +20,9 @@ def _build_calendar_event_out(event, source: str) -> CalendarEventOut:
         end=event.end,
         location=event.location,
         organizer_email=event.organizer_email,
-        attendees=event.attendees or "[]",
+        attendees=[Attendee(**a) for a in attendees_raw],
         cached_at=event.cached_at,
+        source=source,
     )
 
 

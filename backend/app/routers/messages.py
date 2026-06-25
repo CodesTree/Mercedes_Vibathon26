@@ -67,11 +67,19 @@ async def inject_message(data: InjectRequest, db: Session = Depends(get_db)):
     contact = db.query(Contact).filter(Contact.tg_chat_id == data.tg_chat_id).first()
     if contact is None:
         contact = Contact(
-            name=f"tg_{data.tg_chat_id}",
+            name=data.name,
             tg_chat_id=data.tg_chat_id,
+            email=data.email,
             rel_source="unknown",
         )
         db.add(contact)
+        db.commit()
+        db.refresh(contact)
+    else:
+        if data.name:
+            contact.name = data.name
+        if data.email and not contact.email:
+            contact.email = data.email
         db.commit()
         db.refresh(contact)
 
@@ -79,7 +87,7 @@ async def inject_message(data: InjectRequest, db: Session = Depends(get_db)):
     msg = Message(
         contact_id=contact.id,
         body=data.body,
-        received_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        received_at=(data.received_at.replace(tzinfo=None) if data.received_at else datetime.now(timezone.utc).replace(tzinfo=None)),
         tg_update_id=None,
         priority=Priority.NORMAL,
         status=MsgStatus.UNREAD,
@@ -145,7 +153,7 @@ def list_messages(
     items = [MessageOut.from_orm_with_contact(m) for m in messages]
 
     response.headers["X-Total-Count"] = str(total)
-    return MessageListOut(messages=items, total=total)
+    return MessageListOut(items=items, count=total)
 
 
 # ---------------------------------------------------------------------------
