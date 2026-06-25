@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
 from .routes import router
+from .routers.messages import router as messages_router
 
 
 def get_cors_origins() -> list[str]:
@@ -38,6 +39,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(messages_router)
 
 
 @app.get("/health")
