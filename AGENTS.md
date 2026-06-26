@@ -1,4 +1,4 @@
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+## Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
 Tradeoff: These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
@@ -51,3 +51,33 @@ For multi-step tasks, state a brief plan:
    Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 These guidelines are working if: fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## CarPa — Feature Summary
+
+### F1 · Telegram Message Triage + STT Reply
+
+Inbound Telegram DMs are polled, deduplicated by `update_id`, and upserted into `messages`. Gemini classifies priority (`low`/`normal`/`high`) and generates a reply suggestion. `low` + `marketing` contacts are auto-silenced. `normal`/`high` messages surface on the dashboard with the Gemini draft.
+
+**Primary reply (must-demo):** Web Speech API STT → transcript sent as plain Telegram text via `POST /api/messages/{id}/reply` (`reply_mode="text"`). No blobs, no MediaRecorder.
+
+**Stretch reply:** `voice_reply_enabled=true` → MediaRecorder WebM/Opus → `sendVoice`. Failure → blob deleted, `status="send_failed"`.
+
+Invariants: Gemini outage → `priority="normal"`, `summary=null`, HTTP 200. Empty transcript → 422. Voice when disabled → 409 `VOICE_REPLY_DISABLED`. Replying to already-replied message → 409 `INVALID_TRANSITION`.
+
+---
+
+### F2 · Arriving-Late Responder
+
+Triggered by `POST /api/automations/run-late-check`. Computes `mins_late = (now + resolved_eta) − event.start`. If `≥ settings.late_threshold_min` (default 15): Gemini drafts an apology → sent as Telegram text to all matched calendar attendees with a `tg_chat_id`. Unmatched attendees skipped. Gemini failure → static fallback. One `automation_log` row per invocation (`type="late_responder"`).
+
+---
+
+### F3 · Calendar → Cabin Cooling + Departure Planning
+
+Fetches Google Calendar events (SQLite cache fallback, `source="cache"` on outage). Computes `leave_by = event.start − resolved_eta − 5 min` and `precool_due = leave_by − precool_lead_min`. Dashboard shows countdown + late warning. `POST /api/car/cabin/cool` → `climate_on=true`, logs `type="cabin_precool"` (idempotent). `precool_fired=true` once a precool log exists for the current event.
+
+---
+
+### Navigation (ETA utility only)
+
+`POST /api/nav/route` → TomTom Routing API → writes `route_polyline`, `route_eta_minutes`, `eta_source="tomtom"` atomically. Failure → 502, `car_state` unchanged. `TOMTOM_API_KEY` never exposed to browser. No animation, turn-by-turn, or traffic overlay.

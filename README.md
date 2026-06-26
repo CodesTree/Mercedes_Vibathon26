@@ -39,7 +39,7 @@ Start the backend:
 python -m uvicorn app.main:app --reload
 ```
 
-The backend runs at `http://localhost:8000`.
+The backend runs at `http://127.0.0.1:8000/docs` for testing with Swagger.
 
 In a second terminal, install and start the frontend:
 
@@ -178,6 +178,10 @@ Add these repository secrets in GitHub under **Settings > Secrets and variables 
 - `RENDER_DEPLOY_HOOK_URL`
 - `VITE_API_BASE_URL`
 - `BACKEND_CORS_ORIGINS`
+- `GEMINI_API_KEY`
+- `TOMTOM_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `DATABASE_URL`
 
 Real values belong in GitHub, Vercel, Render, or local `.env` files. Do not commit real secrets.
 

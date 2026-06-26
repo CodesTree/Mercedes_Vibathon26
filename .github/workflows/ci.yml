@@ -58,6 +58,13 @@ jobs:
     needs:
       - backend
       - frontend
+    env:
+      VITE_API_BASE_URL: http://127.0.0.1:8000
+      TELEGRAM_BOT_TOKEN: ci-stub
+      GEMINI_API_KEY: ci-stub
+      TOMTOM_API_KEY: ci-stub
+      GOOGLE_CLIENT_ID: ci-stub
+      GOOGLE_CLIENT_SECRET: ci-stub
     steps:
       - name: Checkout
         uses: actions/checkout@v4

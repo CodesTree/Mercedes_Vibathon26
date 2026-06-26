@@ -28,14 +28,45 @@ export function getHealth() {
 }
 
 
-export function getItems() {
-  return request("/api/items");
+const API_CHECKS = [
+  { method: "GET", path: "/health" },
+  { method: "GET", path: "/api/car/state" },
+  { method: "GET", path: "/api/settings/" },
+  { method: "GET", path: "/api/contacts/" },
+  { method: "GET", path: "/api/messages/" },
+  { method: "GET", path: "/api/calendar/events" },
+  { method: "GET", path: "/api/automations/next-departure" },
+  { method: "GET", path: "/api/automations/log" },
+];
+
+
+// Never throws — returns a result row even on failure so one dead
+// endpoint can't break the panel.
+async function checkEndpoint({ method, path }) {
+  const start = performance.now();
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, { method });
+    return {
+      method,
+      path,
+      ok: response.ok,
+      status: response.status,
+      ms: Math.round(performance.now() - start),
+    };
+  } catch (requestError) {
+    return {
+      method,
+      path,
+      ok: false,
+      status: 0,
+      ms: Math.round(performance.now() - start),
+      error: requestError.message,
+    };
+  }
 }
 
 
-export function createItem(title) {
-  return request("/api/items", {
-    method: "POST",
-    body: JSON.stringify({ title }),
-  });
+export function runApiChecks() {
+  return Promise.all(API_CHECKS.map(checkEndpoint));
 }
+
