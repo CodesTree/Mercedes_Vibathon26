@@ -39,7 +39,7 @@ Start the backend:
 python -m uvicorn app.main:app --reload
 ```
 
-The backend runs at `http://localhost:8000`.
+The backend runs at `http://127.0.0.1:8000/docs` for testing with Swagger.
 
 In a second terminal, install and start the frontend:
 

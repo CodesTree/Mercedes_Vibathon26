@@ -1,56 +1,41 @@
 import { useEffect, useState } from "react";
 
-import { createItem, getApiBaseUrl, getHealth, getItems } from "./api";
+import { getApiBaseUrl, getHealth, runApiChecks } from "./api";
 
 
 function App() {
   const [health, setHealth] = useState("checking");
-  const [items, setItems] = useState([]);
-  const [title, setTitle] = useState("");
   const [error, setError] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
+  const [checks, setChecks] = useState([]);
+  const [isChecking, setIsChecking] = useState(false);
 
   async function loadData() {
     setError("");
     try {
-      const [healthResponse, itemResponse] = await Promise.all([
-        getHealth(),
-        getItems(),
-      ]);
+      const healthResponse = await getHealth();
       setHealth(healthResponse.status);
-      setItems(itemResponse);
     } catch (requestError) {
       setHealth("offline");
       setError(requestError.message);
     }
   }
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-    const nextTitle = title.trim();
-    if (!nextTitle) {
-      setError("Enter an item title before adding it.");
-      return;
-    }
-
-    setIsSaving(true);
-    setError("");
+  async function loadChecks() {
+    setIsChecking(true);
     try {
-      const createdItem = await createItem(nextTitle);
-      setItems((currentItems) => [...currentItems, createdItem]);
-      setTitle("");
-    } catch (requestError) {
-      setError(requestError.message);
+      setChecks(await runApiChecks());
     } finally {
-      setIsSaving(false);
+      setIsChecking(false);
     }
   }
 
+  useEffect(() => {
+    loadData();
+    loadChecks();
+  }, []);
+
   const isOnline = health === "ok";
+  const passing = checks.filter((check) => check.ok).length;
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-50">
@@ -68,81 +53,84 @@ function App() {
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-[1fr_1.3fr]">
-          <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">Backend status</h2>
-              <span
-                className={`h-3 w-3 rounded-full ${
-                  isOnline ? "bg-emerald-400" : "bg-rose-400"
-                }`}
-                aria-label={isOnline ? "API online" : "API offline"}
-              />
+        <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Backend status</h2>
+            <span
+              className={`h-3 w-3 rounded-full ${
+                isOnline ? "bg-emerald-400" : "bg-rose-400"
+              }`}
+              aria-label={isOnline ? "API online" : "API offline"}
+            />
+          </div>
+          <dl className="mt-5 space-y-3 text-sm">
+            <div>
+              <dt className="text-zinc-400">Health</dt>
+              <dd className="mt-1 font-mono text-zinc-100">{health}</dd>
             </div>
-            <dl className="mt-5 space-y-3 text-sm">
-              <div>
-                <dt className="text-zinc-400">Health</dt>
-                <dd className="mt-1 font-mono text-zinc-100">{health}</dd>
-              </div>
-              <div>
-                <dt className="text-zinc-400">API base URL</dt>
-                <dd className="mt-1 break-all font-mono text-zinc-100">
-                  {getApiBaseUrl()}
-                </dd>
-              </div>
-            </dl>
-            <button
-              type="button"
-              onClick={loadData}
-              className="mt-6 inline-flex h-10 items-center rounded-md bg-cyan-400 px-4 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-200 focus:ring-offset-2 focus:ring-offset-zinc-900"
-            >
-              Refresh API
-            </button>
-          </section>
+            <div>
+              <dt className="text-zinc-400">API base URL</dt>
+              <dd className="mt-1 break-all font-mono text-zinc-100">
+                {getApiBaseUrl()}
+              </dd>
+            </div>
+          </dl>
+          {error ? (
+            <p className="mt-4 rounded-md border border-rose-400/40 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
+              {error}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={loadData}
+            className="mt-6 inline-flex h-10 items-center rounded-md bg-cyan-400 px-4 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-200 focus:ring-offset-2 focus:ring-offset-zinc-900"
+          >
+            Refresh API
+          </button>
+        </section>
 
-          <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-            <h2 className="text-lg font-semibold">Sample SQLite items</h2>
-            <form onSubmit={handleSubmit} className="mt-4 flex gap-3">
-              <label className="sr-only" htmlFor="item-title">
-                Item title
-              </label>
-              <input
-                id="item-title"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Add a starter task"
-                className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm text-zinc-50 outline-none transition placeholder:text-zinc-500 focus:border-cyan-300"
-              />
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="h-10 rounded-md bg-emerald-400 px-4 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+        <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Backend API checks</h2>
+            <span className="font-mono text-sm text-zinc-400">
+              {checks.length ? `${passing}/${checks.length} passing` : "—"}
+            </span>
+          </div>
+
+          <ul className="mt-5 space-y-2">
+            {checks.map((check) => (
+              <li
+                key={`${check.method} ${check.path}`}
+                className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
               >
-                {isSaving ? "Adding" : "Add"}
-              </button>
-            </form>
+                <span
+                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                    check.ok ? "bg-emerald-400" : "bg-rose-400"
+                  }`}
+                  aria-label={check.ok ? "passing" : "failing"}
+                />
+                <span className="min-w-0 flex-1 truncate font-mono text-zinc-100">
+                  {check.method} {check.path}
+                </span>
+                <span className="font-mono text-zinc-400">
+                  {check.status || check.error || "ERR"}
+                </span>
+                <span className="w-16 text-right font-mono text-zinc-500">
+                  {check.ms}ms
+                </span>
+              </li>
+            ))}
+          </ul>
 
-            {error ? (
-              <p className="mt-4 rounded-md border border-rose-400/40 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
-                {error}
-              </p>
-            ) : null}
-
-            <ul className="mt-5 space-y-3">
-              {items.map((item) => (
-                <li
-                  key={item.id}
-                  className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm"
-                >
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 font-mono text-xs text-cyan-200">
-                    {item.id}
-                  </span>
-                  <span>{item.title}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
+          <button
+            type="button"
+            onClick={loadChecks}
+            disabled={isChecking}
+            className="mt-6 inline-flex h-10 items-center rounded-md bg-cyan-400 px-4 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-cyan-200 focus:ring-offset-2 focus:ring-offset-zinc-900"
+          >
+            {isChecking ? "Running" : "Run checks"}
+          </button>
+        </section>
       </section>
     </main>
   );
