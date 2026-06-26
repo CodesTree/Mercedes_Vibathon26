@@ -178,6 +178,10 @@ Add these repository secrets in GitHub under **Settings > Secrets and variables 
 - `RENDER_DEPLOY_HOOK_URL`
 - `VITE_API_BASE_URL`
 - `BACKEND_CORS_ORIGINS`
+- `GEMINI_API_KEY`
+- `TOMTOM_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `DATABASE_URL`
 
 Real values belong in GitHub, Vercel, Render, or local `.env` files. Do not commit real secrets.
 
