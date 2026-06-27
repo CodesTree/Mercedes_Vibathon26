@@ -2,6 +2,7 @@ import os
 import json
 from pathlib import Path
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 import httpx
 
@@ -23,7 +24,17 @@ def _client_secret() -> str:
 
 
 def _redirect_uri() -> str:
-    return os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/calendar/oauth/callback")
+    return os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/calendar/callback")
+
+
+def has_google_credentials() -> bool:
+    client_id = _client_id().strip()
+    client_secret = _client_secret().strip()
+    if not client_id or not client_secret:
+        return False
+    if client_id == "your_google_client_id_here" or client_secret == "your_google_client_secret_here":
+        return False
+    return client_id.endswith(".apps.googleusercontent.com")
 
 
 def get_oauth_redirect_url() -> str:
@@ -35,7 +46,7 @@ def get_oauth_redirect_url() -> str:
         "access_type": "offline",
         "prompt": "consent",
     }
-    query = "&".join(f"{k}={v}" for k, v in params.items())
+    query = urlencode(params)
     return f"{GOOGLE_AUTH_URL}?{query}"
 
 
