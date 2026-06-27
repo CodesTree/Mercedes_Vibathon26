@@ -1,7 +1,0 @@
-hello
-
-hi
-
-bye
-
-bye
