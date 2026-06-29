@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 
 import { getApiBaseUrl, getHealth, runApiChecks } from "./api";
-
+import SpeechToTextReply from "./components/SpeechToTextReply";
+import AssistantVoiceButton from "./components/AssistantVoiceButton";
+import VoiceNoteRecorder from "./components/VoiceNoteRecorder";
 
 function App() {
   const [health, setHealth] = useState("checking");
@@ -40,6 +42,8 @@ function App() {
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-50">
       <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-center px-6 py-10">
+
+        {/* Header */}
         <div className="mb-8">
           <p className="text-sm font-semibold uppercase tracking-wide text-cyan-300">
             CI/CD starter
@@ -53,6 +57,7 @@ function App() {
           </p>
         </div>
 
+        {/* Backend status */}
         <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Backend status</h2>
@@ -63,11 +68,13 @@ function App() {
               aria-label={isOnline ? "API online" : "API offline"}
             />
           </div>
+
           <dl className="mt-5 space-y-3 text-sm">
             <div>
               <dt className="text-zinc-400">Health</dt>
               <dd className="mt-1 font-mono text-zinc-100">{health}</dd>
             </div>
+
             <div>
               <dt className="text-zinc-400">API base URL</dt>
               <dd className="mt-1 break-all font-mono text-zinc-100">
@@ -75,11 +82,13 @@ function App() {
               </dd>
             </div>
           </dl>
+
           {error ? (
             <p className="mt-4 rounded-md border border-rose-400/40 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
               {error}
             </p>
           ) : null}
+
           <button
             type="button"
             onClick={loadData}
@@ -89,6 +98,7 @@ function App() {
           </button>
         </section>
 
+        {/* API checks */}
         <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Backend API checks</h2>
@@ -107,7 +117,6 @@ function App() {
                   className={`h-2.5 w-2.5 shrink-0 rounded-full ${
                     check.ok ? "bg-emerald-400" : "bg-rose-400"
                   }`}
-                  aria-label={check.ok ? "passing" : "failing"}
                 />
                 <span className="min-w-0 flex-1 truncate font-mono text-zinc-100">
                   {check.method} {check.path}
@@ -131,10 +140,58 @@ function App() {
             {isChecking ? "Running" : "Run checks"}
           </button>
         </section>
+
+        {/* Voice reply */}
+        <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+          <h2 className="text-lg font-semibold">Voice reply (test)</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Speak or type a reply, then send it.
+          </p>
+
+          <div className="mt-5">
+            <SpeechToTextReply
+              messageId={2}
+              suggestedReply="I'll be there in 20 minutes, apologies for the delay."
+              onSent={(result) => console.log("Sent!", result)}
+            />
+          </div>
+        </section>
+
+        {/* Assistant command */}
+        <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+          <h2 className="text-lg font-semibold">
+            Assistant voice command (test)
+          </h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Try "am I late?", "cool the cabin", or "read my messages".
+          </p>
+
+          <div className="mt-5 flex justify-center">
+            <AssistantVoiceButton />
+          </div>
+        </section>
+
+        {/* Voice note */}
+        <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+          <h2 className="text-lg font-semibold">
+            Voice note reply (stretch test)
+          </h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Record and send a real voice note (requires voice_reply_enabled=true on backend).
+          </p>
+
+          <div className="mt-5">
+            <VoiceNoteRecorder
+              messageId={1}
+              transcript="I'll call you back in a bit."
+              onSent={(result) => console.log("Voice note sent!", result)}
+            />
+          </div>
+        </section>
+
       </section>
     </main>
   );
 }
-
 
 export default App;

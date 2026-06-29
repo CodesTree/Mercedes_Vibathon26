@@ -70,3 +70,22 @@ export function runApiChecks() {
   return Promise.all(API_CHECKS.map(checkEndpoint));
 }
 
+// --- Agent / voice features 
+
+// Send a text reply (STT transcript) for a given message.
+// Spec: POST /api/messages/{id}/reply  { reply_mode: "text", transcript }
+export function sendTextReply(messageId, transcript) {
+  return request(`/api/messages/${messageId}/reply`, {
+    method: "POST",
+    body: JSON.stringify({ reply_mode: "text", transcript }),
+  });
+}
+
+// Send a voice command transcript to the assistant.
+// Spec: POST /api/assistant/command  { transcript }
+export function sendAssistantCommand(transcript) {
+  return request("/api/assistant/command", {
+    method: "POST",
+    body: JSON.stringify({ transcript }),
+  });
+}
