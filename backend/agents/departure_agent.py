@@ -6,11 +6,14 @@ from pydantic import BaseModel, Field
 import google.genai as genai
 from langgraph.graph import StateGraph, END
 
+client = None
+
 # ==========================================
 #   INITIALIZE ENVIRONMENT & GEMINI API
 # ==========================================
 if "GEMINI_API_KEY" in os.environ:
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 # ==========================================
@@ -214,7 +217,7 @@ departure_architect_app = workflow.compile()
 
 
 # ==========================================
-#   LOCAL TEST RUN
+#   LOCAL TEST
 # ==========================================
 if __name__ == "__main__":
     print("--- Running Test Case 1: Baseline Commitment Check ---")
